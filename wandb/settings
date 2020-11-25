@@ -1,6 +1,0 @@
-[default]
-entity = clarayuan
-project = droughtwatch
-base_url = https://api.wandb.ai
-disabled = true
-
