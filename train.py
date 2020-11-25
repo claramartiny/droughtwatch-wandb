@@ -118,7 +118,7 @@ features = {
 }        
 
 def getband(example_key):
-  img = tf.decode_raw(example_key, tf.uint8)
+  img = tf.io.decode_raw(example_key, tf.uint8)
   return tf.reshape(img[:IMG_DIM**2], shape=(IMG_DIM, IMG_DIM, 1))
 
 # returns a raw RGB image from the satellite image
@@ -143,7 +143,7 @@ def parse_tfrecords(filelist, batch_size, buffer_size, include_viz=False):
     example = tf.io.parse_single_example(serialized_example, features)
    
     def getband(example_key):
-      img = tf.decode_raw(example_key, tf.uint8)
+      img = tf.io.decode_raw(example_key, tf.uint8)
       return tf.reshape(img[:IMG_DIM**2], shape=(IMG_DIM, IMG_DIM, 1))
     
     bandlist = [getband(example[key]) for key in keylist]
@@ -160,7 +160,7 @@ def parse_tfrecords(filelist, batch_size, buffer_size, include_viz=False):
       return {'image' : image, 'label': example['label']}, label
     return {'image': image}, label
     
-  tfrecord_dataset = tf.data.TFRecordDataset(filelist)
+  tfrecord_dataset = tf.compat.v1.data.TFRecordDataset(filelist)
   tfrecord_dataset = tfrecord_dataset.map(lambda x:_parse_(x)).shuffle(buffer_size).repeat(-1).batch(batch_size)
   tfrecord_iterator = tfrecord_dataset.make_one_shot_iterator()
   image, label = tfrecord_iterator.get_next()
