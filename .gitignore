@@ -1,2 +1,6 @@
 data/
 .ipynb_checkpoints/
+MANIFEST.in
+.vscode
+wandb
+.DS_Store
