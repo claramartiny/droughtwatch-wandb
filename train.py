@@ -12,7 +12,7 @@ import argparse
 import math
 import numpy as np
 import os
-import tensorflow as tf
+import tensorflow.compat.v1 as tf
 print(tf.__version__)
 tf.compat.v1.enable_eager_execution()
 from tensorflow.keras import layers, initializers
@@ -31,13 +31,13 @@ NUM_CLASSES = 4
 TOTAL_TRAIN = 86317
 TOTAL_VAL = 10778
 # limited example counts for faster training/debugging
-NUM_TRAIN = 16000
-NUM_VAL = 3200
+NUM_TRAIN = 86317 #16000
+NUM_VAL = 10778 #3200
 
 # default image side dimension (65 x 65 square)
 IMG_DIM = 65
 # use 7 out of 10 bands for now
-NUM_BANDS = 7
+NUM_BANDS = 11
 # number of images to log (keep below 50 for best results)
 NUM_LOG_IMAGES = 16
 
@@ -45,8 +45,8 @@ NUM_LOG_IMAGES = 16
 # these defaults can be edited here or overwritten via command line
 MODEL_NAME = ""
 DATA_PATH = "data"
-BATCH_SIZE = 128
-EPOCHS = 10
+BATCH_SIZE = 64
+EPOCHS = 500
 L1_SIZE = 32
 L2_SIZE = 64
 L3_SIZE = 128
@@ -118,7 +118,7 @@ features = {
 }        
 
 def getband(example_key):
-  img = tf.io.decode_raw(example_key, tf.uint8)
+  img = tf.decode_raw(example_key, tf.uint8)
   return tf.reshape(img[:IMG_DIM**2], shape=(IMG_DIM, IMG_DIM, 1))
 
 # returns a raw RGB image from the satellite image
@@ -139,11 +139,11 @@ def get_img_from_example(parsed_example, intensify=True):
 
 def parse_tfrecords(filelist, batch_size, buffer_size, include_viz=False):
   # try a subset of possible bands
-  def _parse_(serialized_example, keylist=['B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8']):
+  def _parse_(serialized_example, keylist=['B1','B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8','B9','B10','B11']):
     example = tf.io.parse_single_example(serialized_example, features)
    
     def getband(example_key):
-      img = tf.io.decode_raw(example_key, tf.uint8)
+      img = tf.decode_raw(example_key, tf.uint8)
       return tf.reshape(img[:IMG_DIM**2], shape=(IMG_DIM, IMG_DIM, 1))
     
     bandlist = [getband(example[key]) for key in keylist]
@@ -160,7 +160,7 @@ def parse_tfrecords(filelist, batch_size, buffer_size, include_viz=False):
       return {'image' : image, 'label': example['label']}, label
     return {'image': image}, label
     
-  tfrecord_dataset = tf.compat.v1.data.TFRecordDataset(filelist)
+  tfrecord_dataset = tf.data.TFRecordDataset(filelist)
   tfrecord_dataset = tfrecord_dataset.map(lambda x:_parse_(x)).shuffle(buffer_size).repeat(-1).batch(batch_size)
   tfrecord_iterator = tfrecord_dataset.make_one_shot_iterator()
   image, label = tfrecord_iterator.get_next()
@@ -211,6 +211,40 @@ def build_classification_model(args):
               metrics=['accuracy'])
   return model
 
+def our_model(args):
+    '''Final model (CNN) that takes X_train with ['B2','B3','B4','B5','B6','B7','B8']'''  
+    
+    model = tf.keras.Sequential()
+
+    model.add(tf.keras.layers.InputLayer(input_shape=[IMG_DIM, IMG_DIM, NUM_BANDS], name='image'))
+    
+    model.add(layers.Conv2D(filters=args.l1_size, kernel_size=(2, 2), activation='relu'))
+    model.add(layers.Conv2D(filters=args.l1_size, kernel_size=(2, 2), activation='relu'))
+    model.add(layers.MaxPooling2D(pool_size=(2, 2)))
+    
+    model.add(layers.Conv2D(filters=args.l2_size, kernel_size=(2, 2), activation='relu'))
+    model.add(layers.Conv2D(filters=args.l2_size, kernel_size=(2, 2), activation='relu'))
+    model.add(layers.MaxPooling2D(pool_size=(2, 2)))
+    model.add(layers.Dropout(rate=args.dropout_1))
+    
+    model.add(layers.Conv2D(filters=args.l3_size, kernel_size=(2, 2), activation='relu'))
+    model.add(layers.Conv2D(filters=args.l3_size, kernel_size=(2, 2), activation='relu'))
+    model.add(layers.MaxPooling2D(pool_size=(2, 2)))
+    model.add(layers.Dropout(rate=args.dropout_2))
+    
+    model.add(layers.Flatten())
+    
+    model.add(layers.Dense(units=args.fc1_size, activation='relu'))
+    model.add(layers.Dense(units=args.fc1_size, activation='relu'))
+    
+    model.add(layers.Dense(NUM_CLASSES, activation='softmax'))
+
+    model.compile(loss=tf.keras.losses.categorical_crossentropy,
+              optimizer=tf.keras.optimizers.Adam(lr=args.learning_rate),
+              metrics=['accuracy'])
+
+    return model
+
 def train_cnn(args):
   # load training data in TFRecord format
   train_tfrecords, val_tfrecords = load_data(args.data_path)
@@ -245,8 +279,8 @@ def train_cnn(args):
   cfg.setdefaults(config)
 
   # load images and labels from TFRecords
-  train_images, train_labels = parse_tfrecords(train_tfrecords, args.batch_size, args.num_train)
-  val_images, val_labels = parse_tfrecords(val_tfrecords, args.batch_size, args.num_val)
+  train_images, train_labels = parse_tfrecords(train_tfrecords, args.num_train, args.num_train)
+  val_images, val_labels = parse_tfrecords(val_tfrecords, args.num_val, args.num_val)
   
   # optional: if you'd like to log visual examples of the data
   val_viz, val_viz_labels = parse_tfrecords(val_tfrecords, NUM_LOG_IMAGES, NUM_LOG_IMAGES, include_viz=True)
@@ -257,11 +291,15 @@ def train_cnn(args):
   train_steps_per_epoch = int(math.floor(float(NUM_TRAIN) /float(args.batch_size)))
   val_steps_per_epoch = int(math.floor(float(NUM_VAL)/float(args.batch_size)))
   
-  model = build_classification_model(args)
-  model.fit(train_images, train_labels, steps_per_epoch=train_steps_per_epoch, \
-            epochs=args.epochs, class_weight=class_weights_matrix(), \
+  model = our_model(args)
+  es = EarlyStopping(patience=20, verbose=1, restore_best_weights=True)
+
+  model.fit(train_images, train_labels,
+            #steps_per_epoch=train_steps_per_epoch, \
+            epochs=args.epochs,\
+            #class_weight=class_weights_matrix(), \
             validation_data=(val_images, val_labels), \
-            validation_steps=val_steps_per_epoch, \
+            #validation_steps=val_steps_per_epoch, 
             callbacks=[WandbCallback(input_type="satellite")])
  
 if __name__ == "__main__":
